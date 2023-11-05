@@ -3,6 +3,8 @@ import os
 import datetime
 import json
 import csv
+from prettytable import PrettyTable
+
 
 database='test2'
 
@@ -18,11 +20,14 @@ def check_command(command):
         re.compile(r'create database [\w]+[\s]*;'),
         re.compile(r'use [\w]+[\s]*;'),
         re.compile(r'return[\s]*;'),
+        re.compile(r'drop database [\w]+[\s]*;'),
+        re.compile(r'desc [\w]+[\s]*;'),
         re.compile(r'create table [\w]+\(([\w]+\s*(char\(\d+\)|int)( null[\s]*| not null[\s]*)?,[\s]*)*[\w]+\s*(char\(\d+\)|int)( null[\s]*| not null[\s]*)?([\s]*,[\s]*primary key\(([\w]*,)*[\w]*\))?\)[\s]*;'),
         re.compile(r"insert into [\w]+ values\((('[\w\u4e00-\u9fa5\-]+'|\d+)[\s]*,[\s]*)*('[\w\u4e00-\u9fa5\-]+'|\d+)\)[\s]*;"),
-        re.compile(r'delete from \w+(\s+where (\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+),)*\s*\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)\s*)?;'),
+        re.compile(r'delete from \w+(\s+where (\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)\s*and\s*)*\s*\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)\s*)?;'),
         re.compile(r'drop database [\w]+[\s]*;'),
-        re.compile(r'drop table [\w]+[\s]*;')
+        re.compile(r'drop table [\w]+[\s]*;'),
+        re.compile(r'select ([\w]+(,[\w]+)*|\*) from [\w]+(\s+where (\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)\s*and\s*)*\s*\w+\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)\s*)?;'),
     ]
 
     for pattern in patterns:
@@ -43,7 +48,6 @@ def create_database(command):
         writer.writerow([database_name, time])
     with open(database_name+'/system_table.json','w') as f:
         json.dump({},f)
-    return
 
 def use_database(command):
     global database
@@ -52,7 +56,6 @@ def use_database(command):
         print("Database not exists!")
         return
     database = database_name
-    return
 
 def return_database():
     global database
@@ -60,6 +63,57 @@ def return_database():
         print("No database in use!")
         return
     database=''
+    return
+
+def drop_database(command):
+    database_name = re.search(r'drop database ([\w]+)',command).group(1)
+    if os.path.exists(database_name)==False:
+        print("Database not exists!")
+        return
+    for file in os.listdir(database_name):
+        os.remove(database_name+'/'+file)
+    os.rmdir(database_name)
+    with open('system_database.csv','r') as f:
+        reader = csv.reader(f)
+        database_list = [row for row in reader]
+    database_list = [item for item in database_list if item[0] != database_name]
+    with open('system_database.csv','w',newline='') as f:
+        writer = csv.writer(f)
+        for item in database_list:
+            writer.writerow(item)
+
+def desc(command):
+    global database
+    if(database==''):
+        print("No database in use!")
+        return
+    table_name = re.search(r'desc ([\w]+)',command).group(1)
+    if os.path.exists(database+'/'+table_name+'.csv')==False:
+        print("Table not exists!")
+        return
+    with open(database+'/system_table.json','r') as f:
+        table_dict=json.load(f)
+    print(table_dict[table_name])
+    data = []
+    data.append(['Name', 'Type', 'Length', 'Not Null', 'Primary Key'])
+    # TODO not_null not null
+    for item in table_dict[table_name]:
+        data.append([item['name'], item['type'], item['length'], item['not null'], item['primary_key']])
+    # column_widths = [max(len(str(item)) for item in column) for column in zip(*data)]
+    # separator = "+".join("-" * (width + 2) for width in column_widths)
+    # print("+" + separator + "+")
+    # print("| " + " | ".join(str(item).ljust(width) for item, width in zip(data[0], column_widths)) + " |")
+    # print("+" + separator + "+")
+    # data=data[1:]
+    # for row in data:
+    #     print("| " + " | ".join(str(item).ljust(width) for item, width in zip(row, column_widths)) + " |")
+    # print("+" + separator + "+")
+    table = PrettyTable()
+    table.field_names = data[0]
+    for row in data[1:]:
+        table.add_row(row)
+    print(table)
+
     return
 
 def create_table(command):
@@ -153,74 +207,94 @@ def delete_from(command):
     if os.path.exists(database+'/'+table_name+'.csv')==False:
         print("Table not exists!")
         return
-    is_where = re.search(r'where',command)
-    print(is_where)
-    if is_where:
-        condition = re.search(r'where ([\w]+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',command).group(0)
-        condition = condition.split()
-        print(condition)
-        return;
-        if condition[1] == '=':
-            condition[1] = '=='
-        with open(database+'/'+table_name+'.csv','r') as f:
-            reader = csv.reader(f)
-            table_data = [row for row in reader]
-        table_data = table_data[1:]
-        with open(database+'/'+table_name+'.csv','w',newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(table_data[0])
-            for item in table_data[1:]:
-                if eval(item[condition[0]]+condition[1]+condition[2]):
-                    writer.writerow(item)
-    return;
-    table_item=re.findall(r'(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',command)
-    table_item = [item.strip('\'') for item in table_item]
-    print(table_item)
-    
-    with open(database+'/system_table.json','r') as f:
-        table_dict=json.load(f)
-    primary_key_indices = [i for i, item in enumerate(table_dict[table_name]) if item['primary_key'] == True]
-    # 合法性检查
-    for i, item in enumerate(table_item):
-        if table_dict[table_name][i]['type'] == 'int' and not item.isdigit():
-            print("Invalid input!")
-            return
-        elif table_dict[table_name][i]['type'] == 'char' and len(item) > table_dict[table_name][i]['length']:
-            print("Invalid input!")
-            return
-        elif table_dict[table_name][i]['not null'] and item == '':
-            print("Invalid input!")
-            return
-
     with open(database+'/'+table_name+'.csv','r') as f:
         reader = csv.reader(f)
         table_data = [row for row in reader]
-    table_data = table_data[1:]
-    # 检查主键
-    for item in table_data:
-        if all(item[j] == table_item[j] for j in primary_key_indices):
-            print("Primary key exists!")
-            return
+    is_where = re.search(r'where (.*);',command)
+    if is_where:
+        return
+        where=is_where.group(1)
+        # 将操作数和操作符提取出来
+        where_list=re.findall(r'(\w+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',where)
+        # 将字符串中多余引号去掉
+        print(where_list)
+    else:
+        # 清空文件除第一行以外的内容
+        with open(database+'/'+table_name+'.csv','w',newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(table_data[0])
+    return
 
-    with open(database+'/'+table_name+'.csv','a',newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(table_item)
+def select(command):
+    global database
+    if(database==''):
+        print("No database in use!")
+        return
+    table_name = re.search(r'select ([\w]+|\*) from ([\w]+)',command).group(2)
+    if os.path.exists(database+'/'+table_name+'.csv')==False:
+        print("Table not exists!")
+        return
+    with open(database+'/'+table_name+'.csv','r') as f:
+        reader = csv.reader(f)
+        table_data = [row for row in reader]
+    is_where = re.search(r'where (.*);',command)
+    if is_where:
+        return
+        where=is_where.group(1)
+        # 将操作数和操作符提取出来
+        where_list=re.findall(r'(\w+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',where)
+        # 将字符串中多余引号去掉
+        print(where_list)
+    else:
+        # TODO 封装函数
+        data = table_data
+        # 考虑中文情况
+        
+
+        # column_widths = [max(len(str(item)) for item in column) for column in zip(*data)]
+
+        # column_widths = [0] * len(data[0])
+        # for row in data:
+        #     for i, cell in enumerate(row):
+        #         cell_length = sum(2 if ord(c) > 127 else 1 for c in cell)
+        #         column_widths[i] = max(column_widths[i], cell_length)
+
+        # print(column_widths)
+        # separator = "+".join("-" * (width + 2) for width in column_widths)
+        # print("+" + separator + "+")
+        # print("|" + "|".join(str(item).ljust(width,chr(12288)) for item, width in zip(data[0], column_widths)) + "|")
+        # print("+" + separator + "+")
+        # data=data[1:]
+        # for row in data:
+        #     print("|" + "|".join(str(item).ljust(width,chr(12288)) for item, width in zip(row, column_widths)) + "|")
+        # print("+" + separator + "+")
+
+        table = PrettyTable()
+        table.field_names = data[0]
+        for row in data[1:]:
+            table.add_row(row)
+        print(table)
 
 if __name__ == '__main__':
+    command_functions = {
+        'create database': create_database,
+        'use': use_database,
+        'return': return_database,
+        'drop database': drop_database,
+        'desc': desc,
+        'create table': create_table,
+        'insert into': insert_into,
+        'delete from': delete_from,
+        'select': select,
+    }
+
     while True:
         command = get_command()
-        if check_command(command)==False:
+        if not check_command(command):
             print("Invalid command!")
             continue
-        if(re.match(r'create database',command)):
-            create_database(command)
-        if(re.match(r'use',command)):
-            use_database(command)
-        if(re.match(r'return',command)):
-            return_database()
-        if(re.match(r'create table',command)):
-            create_table(command)
-        if(re.match(r'insert into',command)):
-            insert_into(command)
-        if(re.match(r'delete from',command)):
-            delete_from(command)
+
+        for cmd, func in command_functions.items():
+            if re.match(cmd, command):
+                func(command)
+                break
