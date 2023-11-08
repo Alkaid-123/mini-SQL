@@ -116,7 +116,7 @@ def create_table(command):
         print("No database in use!")
         return
     table_name = re.search(r'create table ([\w]+)\s*\(',command).group(1)
-    if os.path.exists(database+'/'+table_name+'.txt'):
+    if os.path.exists(database+'/'+table_name+'.csv'):
         print("Table exists!")
         return
 
@@ -182,6 +182,7 @@ def insert_into(command):
         table_data = [row for row in reader]
     table_data = table_data[1:]
     # 检查主键
+    # TODO 有问题 莫名的主键重复
     for item in table_data:
         if all(item[j] == table_item[j] for j in primary_key_indices):
             print("Primary key exists!")
@@ -232,7 +233,10 @@ def cartesian_product(tables):
     return result
 
 
-def find_index(tables,name,table_name_list,header):
+def find_index(tables,name,table_name_list):
+    header=[]
+    for item in tables:
+        header.append(item[0])
     result=re.search(r'([\w]+)\.([\w]+)',name)
     if result:
         table_name=result.group(1)
@@ -277,7 +281,12 @@ def select(command):
         # 将type为int的列转换为int
         for item in table_dict[table_name]:
             if item['type'] == 'int':
-                table_data = [[int(item) if item.isdigit() else item for item in row] for row in table_data]
+                # table_data = [[int(item) if item.isdigit() else item for item in row] for row in table_data]
+                index=table_data[0].index(item['name'])
+                for row in table_data[1:]:
+                    row[index]=int(row[index]) if row[index].isdigit() else row[index]
+
+
 
         header.append(table_data[0])
         # datas.append(table_data[1:])
@@ -315,12 +324,12 @@ def select(command):
         # select操作
         # TODO 得去自己里面找 不能用笛卡尔积 不然所有人都会满足条件 也就是更新tables
         for item in select_list:
-            item[0]=find_index(tables,item[0],table_name_list,header)
+            item[0]=find_index(tables,item[0],table_name_list)
         print(select_list)
-        for item in join_list:
-            item[0]=find_index(tables,item[0],table_name_list,header)
-            item[2]=find_index(tables,item[2],table_name_list,header)
-        print(join_list)
+        # for item in join_list:
+        #     item[0]=find_index(tables,item[0],table_name_list,header)
+        #     item[2]=find_index(tables,item[2],table_name_list,header)
+        # print(join_list)
 
         for item in select_list:
             table=tables[item[0][0]]
@@ -341,20 +350,33 @@ def select(command):
 
         # join操作
         # TODO 这只是两表合并 还有多表合并
+        # TODO new error11.9 两边分别合并，后合并到一起有问题
         if len(join_list)==len(table_name_list)-1 and len(join_list)!=0:
-            merge_table=[]
+            
             for item in join_list:
-                table1=tables[item[0][0]]
-                table2=tables[item[2][0]]
+                merge_table=[]
+                pos1=find_index(tables,item[0],table_name_list)
+                pos2=find_index(tables,item[2],table_name_list)
+                print(pos1,pos2)
+                table1=tables[pos1[0]]
+                table2=tables[pos2[0]]
+                print("table1\n")
+                print(table1)
+                # print_table(table1)
+                print("table2\n")
+                # print_table(table2)
                 # 如果table1中某一行当中item[0][1]列的值和table2中某一行item[2][1]列的值相等 则将这两行合并
                 merge_table.append(table1[0]+table2[0])
+                
+
                 for row1 in table1[1:]:
                     for row2 in table2[1:]:
-                        if row1[item[0][1]]==row2[item[2][1]]:
+                        if row1[pos1[1]]==row2[pos2[1]]:
                             merge_table.append(row1+row2)
-                tables[item[0][0]]=merge_table
-                tables[item[2][0]]=merge_table 
-                print('tables\n',tables)
+                # 列就变了不可取 # TODO 3个表连接
+                print(merge_table)
+                tables[pos1[0]]=merge_table
+                tables[pos2[0]]=merge_table 
             tables=merge_table
 
             
