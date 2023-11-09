@@ -1,9 +1,10 @@
+import collections
 import re
 import os
 import datetime
 import json
 import csv
-from prettytable import PrettyTable, from_csv
+from prettytable import PrettyTable
 
 database='test2'
 
@@ -12,7 +13,7 @@ def get_command():
     while not command.strip():
         command = input("sql> ").lower().strip() + ';'
     command=re.sub(r'\s+',' ',command)
-    print(command)
+    # print(command)
     return command
 
 def check_command(command):
@@ -81,7 +82,6 @@ def drop_database(command):
         writer = csv.writer(f)
         for item in database_list:
             writer.writerow(item)
-
 
 def print_table(data):
     table = PrettyTable()
@@ -160,7 +160,6 @@ def insert_into(command):
 
     table_item=re.findall(r'(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',command)
     table_item = [item.strip('\'') for item in table_item]
-    print(table_item)
     
     with open(database+'/system_table.json','r') as f:
         table_dict=json.load(f)
@@ -207,19 +206,36 @@ def delete_from(command):
         table_data = [row for row in reader]
     is_where = re.search(r'where (.*);',command)
     if is_where:
-        return
         where=is_where.group(1)
-        # 将操作数和操作符提取出来
-        where_list=re.findall(r'(\w+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+)',where)
-        # 将字符串中多余引号去掉
-        print(where_list)
+        where_list=re.findall(r'([\w\.]+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+|[\w\.]+)',where)
+        where_list=[list(item) for item in where_list]
+        for item in where_list:
+            if item[2].startswith('\''):
+                item[2] = item[2].strip('\'')
+            elif item[2].isdigit():
+                item[2] = int(item[2])
+            if item[1]=='=':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]!=item[2]]
+            elif item[1]=='>':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]<=item[2]]
+            elif item[1]=='<':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]>=item[2]]
+            elif item[1]=='>=':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]<item[2]]
+            elif item[1]=='<=':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]>item[2]]
+            elif item[1]=='!=':
+                table_data=[table_data[0]]+[row for row in table_data[1:] if row[table_data[0].index(item[0])]==item[2]]
+        with open(database+'/'+table_name+'.csv','w',newline='') as f:
+            writer = csv.writer(f)
+            for row in table_data:
+                writer.writerow(row)
     else:
         # 清空文件除第一行以外的内容
         with open(database+'/'+table_name+'.csv','w',newline='') as f:
             writer = csv.writer(f)
             writer.writerow(table_data[0])
     return
-
 
 def cartesian_product(tables):
     if len(tables) == 1:
@@ -229,9 +245,37 @@ def cartesian_product(tables):
     for item in tables[0]:
         for product_item in rest_product:
             result.append(item + product_item)
-    
     return result
 
+def merge_tables(table1, table2, pos1,pos2):
+    merge_table=[]
+    merge_table.append(table1[0]+table2[0])
+    for row1 in table1[1:]:
+        for row2 in table2[1:]:
+            if row1[pos1]==row2[pos2]:
+                merge_table.append(row1+row2)
+    return merge_table
+
+def build_tree(node, edges, visited, tree):
+    visited.add(node)
+    for edge in edges:
+        if edge[0] == node and edge[1] not in visited:
+            tree[node].append(edge[1])
+            build_tree(edge[1], edges, visited, tree)
+        elif edge[1] == node and edge[0] not in visited:
+            tree[node].append(edge[0])
+            build_tree(edge[0], edges, visited, tree)
+
+def merge_tree(node, tree, tables, find_dict):
+    if not tree[node]:  # 叶子节点
+        return tables[node]
+    else:
+        merged_table = tables[node]
+        for child in tree[node]:
+            child_table = merge_tree(child, tree, tables, find_dict)
+            pos = find_dict[(node,child)]
+            merged_table = merge_tables(merged_table, child_table, pos[0][1], pos[1][1])
+        return merged_table
 
 def find_index(tables,name,table_name_list):
     header=[]
@@ -251,9 +295,6 @@ def find_index(tables,name,table_name_list):
                 break
     return [table_index,column_index]
 
-
-
-
 def select(command):
     global database
     if(database==''):
@@ -262,14 +303,11 @@ def select(command):
     table_name = re.search(r'from ([\w,\s]+)(where|;)',command).group(1)
     table_name=table_name.replace(' ','')
     table_name_list = table_name.split(',')
-    print(table_name_list)
-
     with open(database+'/system_table.json','r') as f:
         table_dict=json.load(f)
 
     tables=[]
     header=[]
-    # datas=[]
     for table_name in table_name_list:
         if os.path.exists(database+'/'+table_name+'.csv')==False:
             print("Table '"+ table_name +"' not exists!")
@@ -278,36 +316,23 @@ def select(command):
             reader = csv.reader(f)
             table_data = [row for row in reader]
 
-        # 将type为int的列转换为int
         for item in table_dict[table_name]:
             if item['type'] == 'int':
-                # table_data = [[int(item) if item.isdigit() else item for item in row] for row in table_data]
                 index=table_data[0].index(item['name'])
                 for row in table_data[1:]:
                     row[index]=int(row[index]) if row[index].isdigit() else row[index]
-
-
-
         header.append(table_data[0])
-        # datas.append(table_data[1:])
         tables.append(table_data)
     
-    print(tables)
-    
-
-
     # join and select操作
     is_where = re.search(r'where (.*);',command)
     select_list = []
     join_list = []
     if is_where:
         where=is_where.group(1)
-        # 将操作数和操作符提取出来
         where_list=re.findall(r'([\w\.]+)\s*(=|>|<|>=|<=|!=)\s*(\'[\w\u4e00-\u9fa5\-]+\'|\d+|[\w\.]+)',where)
-
         where_list=[list(item) for item in where_list]
 
-        
         for item in where_list:
             if item[2].startswith('\''):
                 item[2] = item[2].strip('\'')
@@ -317,19 +342,18 @@ def select(command):
                 select_list.append(item)
             else:
                 join_list.append(item)
-        print(where_list)
-        print(select_list)
-        print(join_list)
         
         # select操作
-        # TODO 得去自己里面找 不能用笛卡尔积 不然所有人都会满足条件 也就是更新tables
         for item in select_list:
             item[0]=find_index(tables,item[0],table_name_list)
-        print(select_list)
-        # for item in join_list:
-        #     item[0]=find_index(tables,item[0],table_name_list,header)
-        #     item[2]=find_index(tables,item[2],table_name_list,header)
-        # print(join_list)
+        edges=[]
+        find_dict={}
+        for item in join_list:
+            item[0]=find_index(tables,item[0],table_name_list)
+            item[2]=find_index(tables,item[2],table_name_list)
+            edges.append([item[0][0], item[2][0]])
+            find_dict[(item[0][0], item[2][0])]=[item[0],item[2]]
+            find_dict[(item[2][0], item[0][0])]=[item[2],item[0]]
 
         for item in select_list:
             table=tables[item[0][0]]
@@ -346,42 +370,16 @@ def select(command):
             elif item[1]=='!=':
                 table=[table[0]]+[row for row in table[1:] if row[item[0][1]]!=item[2]]
             tables[item[0][0]]=table
-        print('selected tables',tables)
 
-        # join操作
-        # TODO 这只是两表合并 还有多表合并
-        # TODO new error11.9 两边分别合并，后合并到一起有问题
+        # 构建连接树 从叶子节点合并表
         if len(join_list)==len(table_name_list)-1 and len(join_list)!=0:
-            
-            for item in join_list:
-                merge_table=[]
-                pos1=find_index(tables,item[0],table_name_list)
-                pos2=find_index(tables,item[2],table_name_list)
-                print(pos1,pos2)
-                table1=tables[pos1[0]]
-                table2=tables[pos2[0]]
-                print("table1\n")
-                print(table1)
-                # print_table(table1)
-                print("table2\n")
-                # print_table(table2)
-                # 如果table1中某一行当中item[0][1]列的值和table2中某一行item[2][1]列的值相等 则将这两行合并
-                merge_table.append(table1[0]+table2[0])
-                
+            root = 0
+            tree = collections.defaultdict(list)
+            visited = set()
+            build_tree(root, edges, visited, tree)
+            merged_table = merge_tree(root, tree, tables, find_dict)
+            tables=merged_table
 
-                for row1 in table1[1:]:
-                    for row2 in table2[1:]:
-                        if row1[pos1[1]]==row2[pos2[1]]:
-                            merge_table.append(row1+row2)
-                # 列就变了不可取 # TODO 3个表连接
-                print(merge_table)
-                tables[pos1[0]]=merge_table
-                tables[pos2[0]]=merge_table 
-            tables=merge_table
-
-            
-
-    # TODO 封装函数
     # 笛卡尔积
     if len(join_list)==len(table_name_list)-1 and len(join_list)!=0:
         pass
@@ -397,7 +395,6 @@ def select(command):
     # project操作
     project=re.search(r'select (.*) from',command).group(1)
     project_list=project.split(',')
-    print(project_list)
     if project_list[0]=='*':
         pass
     else:
@@ -405,8 +402,7 @@ def select(command):
         project_list=[tables[0].index(item) for item in project_list]
         header=[tables[0][i] for i in project_list]
         tables=[header]+[[item[i] for i in project_list] for item in tables[1:]]
-    # print(tables)
-    # TODO tables[0???
+
     print_table(tables)
     print('共有'+str(len(tables)-1)+'条记录')
 
